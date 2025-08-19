@@ -32,6 +32,11 @@ My EWW powered Hyprland rice.
 
 Install the dependencies via any of the AUR helper (Paru example below):
 
+## Auto-install 
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/linxford/scripts/main/install-eww-rice.sh 2>/dev/null || curl -fsSL https://raw.githubusercontent.com/linxford/scripts/main/install-eww-rice.sh)
+```
+
 ```bash
   git clone https://github.com/randomboi404/eww --depth 1
   cd eww
