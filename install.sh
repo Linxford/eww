@@ -5,52 +5,46 @@ set -euo pipefail
 error_exit() { echo -e "\e[31m[x] $1\e[0m"; exit 1; }
 warn() { echo -e "\e[33m[!] $1\e[0m"; }
 
-check_command() {
-    if ! command -v "$1" >/dev/null 2>&1; then
-        if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-            case "$1" in
-                git) sudo pacman -S --needed git -y ;;
-                paru) error_exit "paru (AUR helper) not installed. Please install it manually." ;;
-                wal) sudo pacman -S --needed pywal -y ;;
-                matugen) warn "matugen not installed, colors may not apply" ;;
-            esac
-        else
-            error_exit "$1 not found, please install it manually."
-        fi
-    fi
-}
-
-# ────────────── Detect Installer Type ──────────────
+# ────────────── Installer Type Selection ──────────────
 choose_installer() {
     if command -v zenity >/dev/null 2>&1; then
-        INSTALLER="zenity"
-    elif command -v whiptail >/dev/null 2>&1; then
-        INSTALLER="whiptail"
+        INSTALLER=$(zenity --list --radiolist \
+            --title="EWW Rice Installer" \
+            --text="Choose installer type:" \
+            --column="" --column="Option" \
+            TRUE "GUI (zenity)" FALSE "TUI (whiptail)" \
+            --height=200 --width=400) || INSTALLER="whiptail"
     else
-        error_exit "Neither zenity nor whiptail is available. Please install one."
+        INSTALLER=$(whiptail --title "EWW Rice Installer" --menu "Choose installer type:" 15 50 2 \
+            1 "TUI (whiptail)" 2 "GUI (zenity)" 3>&1 1>&2 2>&3) || INSTALLER="whiptail"
+        [ "$INSTALLER" == "2" ] && INSTALLER="zenity"
+        [ "$INSTALLER" == "1" ] && INSTALLER="whiptail"
     fi
     echo "Using installer: $INSTALLER"
 }
 
 # ────────────── Progress Functions ──────────────
-progress_whiptail() { STEP=$((STEP+1)); PERCENT=$(( STEP * 100 / TOTAL )); whiptail --title "EWW Rice Installer" --gauge "$1" 6 60 $PERCENT; }
-progress_zenity() { echo "$((STEP * 100 / TOTAL))"; echo "# $1"; STEP=$((STEP+1)); }
+progress_whiptail() {
+    STEP=$((STEP+1))
+    PERCENT=$(( STEP * 100 / TOTAL ))
+    whiptail --title "EWW Rice Installer" --gauge "$1" 6 60 $PERCENT
+}
 
-# ────────────── Universal Installer ──────────────
+progress_zenity() {
+    echo "$((STEP * 100 / TOTAL))"
+    echo "# $1"
+    STEP=$((STEP+1))
+}
+
+# ────────────── Main Installer ──────────────
 TOTAL=6
 STEP=0
-
-# 1. Check prerequisites
-echo "Checking and installing prerequisites..."
-check_command git
-check_command paru
-check_command wal
-check_command matugen
-
-# 2. Choose installer type
 choose_installer
 
-# 3. Define steps
+# Check core requirements
+command -v git >/dev/null 2>&1 || error_exit "git is required but not installed."
+command -v paru >/dev/null 2>&1 || error_exit "paru (AUR helper) is required but not installed."
+
 STEPS=(
 "Checking requirements..."
 "Cloning repo..."
@@ -60,7 +54,7 @@ STEPS=(
 "Installation complete!"
 )
 
-# 4. Run installer logic
+# ────────────── Installer Logic ──────────────
 if [ "$INSTALLER" == "whiptail" ]; then
     whiptail --title "EWW Rice Installer" --msgbox "Press Enter to start installation." 10 60
     for msg in "${STEPS[@]}"; do
@@ -90,28 +84,50 @@ elif [ "$INSTALLER" == "zenity" ]; then
         sleep 0.5
         case "$msg" in
             "Cloning repo...")
-                if [ -d "$HOME/eww" ]; then echo "Repo exists, skipping..." >>"$LOGFILE"; cd "$HOME/eww"; else git clone https://github.com/randomboi404/eww --depth 1 "$HOME/eww" &>>"$LOGFILE"; cd "$HOME/eww"; fi
+                if [ -d "$HOME/eww" ]; then
+                    echo "Repo exists, skipping clone..." >>"$LOGFILE"
+                    cd "$HOME/eww"
+                else
+                    git clone https://github.com/randomboi404/eww --depth 1 "$HOME/eww" &>>"$LOGFILE"
+                    cd "$HOME/eww"
+                fi
             ;;
-            "Installing dependencies...") [ -f dependencies.lst ] && paru -Syu --needed --noconfirm $(cat dependencies.lst) &>>"$LOGFILE" || echo "dependencies.lst missing" >>"$LOGFILE";;
+            "Installing dependencies...")
+                if [ -f dependencies.lst ]; then
+                    paru -Syu --needed --noconfirm $(cat dependencies.lst) &>>"$LOGFILE"
+                else
+                    echo "dependencies.lst not found, skipping..." >>"$LOGFILE"
+                fi
+            ;;
             "Copying configs...")
                 mkdir -p "$HOME/.config"
                 for dir in eww hypr; do
-                    [ -d "$HOME/.config/$dir" ] && echo "$dir exists, skipping..." >>"$LOGFILE" || cp -r "$dir" "$HOME/.config/" &>>"$LOGFILE"
+                    if [ -d "$HOME/.config/$dir" ]; then
+                        echo "$dir exists, skipping..." >>"$LOGFILE"
+                    else
+                        cp -r "$dir" "$HOME/.config/" &>>"$LOGFILE"
+                    fi
                 done
             ;;
             "Creating env.json...")
                 mkdir -p "$HOME/.env"
-                [ -f "$HOME/.env/env.json" ] && echo "env.json exists, skipping..." >>"$LOGFILE" || cat > "$HOME/.env/env.json" <<EOF
+                if [ -f "$HOME/.env/env.json" ]; then
+                    echo "env.json exists, skipping..." >>"$LOGFILE"
+                else
+                    cat > "$HOME/.env/env.json" <<EOF
 {
   "WEATHER_API_KEY": "Your weather api key",
   "LOCATION": "Your city name"
 }
 EOF
+                    echo "env.json created." >>"$LOGFILE"
+                fi
             ;;
         esac
     done
     ) | zenity --progress --title="EWW Rice Installer" --text="Starting..." --percentage=0 --auto-close --pulsate --no-cancel
 
+    # Show live log window
     zenity --text-info --title="Installer Log" --filename="$LOGFILE" --width=800 --height=500
     zenity --info --text="Installation complete! Run 'eww daemon' and open widgets."
     rm -f "$LOGFILE"
