@@ -34,7 +34,7 @@ Install the dependencies via any of the AUR helper (Paru example below):
 
 ## Auto-install 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/linxford/scripts/main/install-eww-rice.sh 2>/dev/null || curl -fsSL https://raw.githubusercontent.com/linxford/scripts/main/install-eww-rice.sh)
+bash <(wget -qO- https://raw.githubusercontent.com/linxford/eww/main/install.sh 2>/dev/null || curl -fsSL https://raw.githubusercontent.com/linxford/eww/main/install.sh)
 ```
 
 ```bash
