@@ -1,137 +1,130 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# === CONFIG ===
-REPO_URL="https://github.com/randomboi404/eww"
-REPO_DIR="$HOME/.local/share/eww-rice"
-CONFIG_DIR="$HOME/.config"
-ENV_DIR="$HOME/.env"
-ENV_FILE="$ENV_DIR/env.json"
-HYPR_CONF="$CONFIG_DIR/hypr/hyprland.conf"
-ENDRS_REPO="https://github.com/Dr-42/end-rs"
-ENDRS_DIR="$HOME/.local/share/end-rs"
-BIN_DIR="$CONFIG_DIR/eww/bin"
+# ────────────── Functions ──────────────
+error_exit() { echo -e "\e[31m[x] $1\e[0m"; exit 1; }
+warn() { echo -e "\e[33m[!] $1\e[0m"; }
 
-# === HELPERS ===
-download_file() {
-  local url="$1"
-  local output="$2"
-
-  if command -v wget >/dev/null 2>&1; then
-    wget -qO "$output" "$url"
-  elif command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$output"
-  else
-    echo "❌ Neither wget nor curl is installed. Please install one and re-run."
-    exit 1
-  fi
+check_command() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+            case "$1" in
+                git) sudo pacman -S --needed git -y ;;
+                paru) error_exit "paru (AUR helper) not installed. Please install it manually." ;;
+                wal) sudo pacman -S --needed pywal -y ;;
+                matugen) warn "matugen not installed, colors may not apply" ;;
+            esac
+        else
+            error_exit "$1 not found, please install it manually."
+        fi
+    fi
 }
 
-backup_if_exists() {
-  local target="$1"
-  if [ -e "$target" ]; then
-    local backup="${target}.bak.$(date +%s)"
-    echo "⚠️  Backing up existing $target -> $backup"
-    mv "$target" "$backup"
-  fi
+# ────────────── Detect Installer Type ──────────────
+choose_installer() {
+    if command -v zenity >/dev/null 2>&1; then
+        INSTALLER="zenity"
+    elif command -v whiptail >/dev/null 2>&1; then
+        INSTALLER="whiptail"
+    else
+        error_exit "Neither zenity nor whiptail is available. Please install one."
+    fi
+    echo "Using installer: $INSTALLER"
 }
 
-install_packages() {
-  if command -v yay >/dev/null 2>&1; then
-    AUR_HELPER="yay"
-  elif command -v paru >/dev/null 2>&1; then
-    AUR_HELPER="paru"
-  else
-    echo "❌ No AUR helper (yay/paru) found. Install one and re-run."
-    exit 1
-  fi
+# ────────────── Progress Functions ──────────────
+progress_whiptail() { STEP=$((STEP+1)); PERCENT=$(( STEP * 100 / TOTAL )); whiptail --title "EWW Rice Installer" --gauge "$1" 6 60 $PERCENT; }
+progress_zenity() { echo "$((STEP * 100 / TOTAL))"; echo "# $1"; STEP=$((STEP+1)); }
 
-  echo "📦 Installing dependencies with $AUR_HELPER..."
-  $AUR_HELPER -Syu --needed --noconfirm jq python-pywal matugen-git swayosd hyprlock eww-git rust
-}
+# ────────────── Universal Installer ──────────────
+TOTAL=6
+STEP=0
 
-# === SCRIPT START ===
-echo "🚀 Starting cautious install of EWW rice..."
+# 1. Check prerequisites
+echo "Checking and installing prerequisites..."
+check_command git
+check_command paru
+check_command wal
+check_command matugen
 
-# Install deps
-install_packages
+# 2. Choose installer type
+choose_installer
 
-# Clone rice repo
-echo "📥 Cloning rice repo..."
-rm -rf "$REPO_DIR"
-git clone --depth 1 "$REPO_URL" "$REPO_DIR"
-cd "$REPO_DIR"
+# 3. Define steps
+STEPS=(
+"Checking requirements..."
+"Cloning repo..."
+"Installing dependencies..."
+"Copying configs..."
+"Creating env.json..."
+"Installation complete!"
+)
 
-# Install extra deps if listed
-if [ -f dependencies.lst ]; then
-  echo "📦 Installing extra rice dependencies..."
-  $AUR_HELPER -Syu --needed --noconfirm $(cat dependencies.lst)
-fi
-
-# Copy configs
-echo "⚙️  Copying configs to $CONFIG_DIR..."
-for dir in eww hypr scripts; do
-  if [ -d "$REPO_DIR/$dir" ]; then
-    backup_if_exists "$CONFIG_DIR/$dir"
-    cp -r "$REPO_DIR/$dir" "$CONFIG_DIR/"
-    echo "✅ Installed $dir config"
-  fi
-done
-
-# Setup env.json
-mkdir -p "$ENV_DIR"
-if [ ! -f "$ENV_FILE" ]; then
-  cat > "$ENV_FILE" <<EOF
+# 4. Run installer logic
+if [ "$INSTALLER" == "whiptail" ]; then
+    whiptail --title "EWW Rice Installer" --msgbox "Press Enter to start installation." 10 60
+    for msg in "${STEPS[@]}"; do
+        progress_whiptail "$msg"
+        case "$msg" in
+            "Cloning repo...") [ -d "$HOME/eww" ] || git clone https://github.com/randomboi404/eww --depth 1 "$HOME/eww"; cd "$HOME/eww" ;;
+            "Installing dependencies...") [ -f dependencies.lst ] && paru -Syu --needed --noconfirm $(cat dependencies.lst) ;;
+            "Copying configs...") mkdir -p "$HOME/.config"; for dir in eww hypr; do [ -d "$HOME/.config/$dir" ] || cp -r "$dir" "$HOME/.config/"; done ;;
+            "Creating env.json...") mkdir -p "$HOME/.env"; [ -f "$HOME/.env/env.json" ] || cat > "$HOME/.env/env.json" <<EOF
 {
-  "WEATHER_API_KEY": "PUT-YOUR-API-KEY-HERE",
+  "WEATHER_API_KEY": "Your weather api key",
   "LOCATION": "Your city name"
 }
 EOF
-  echo "⚠️  Created $ENV_FILE — please edit it to set your WEATHER_API_KEY and LOCATION."
-else
-  echo "ℹ️  $ENV_FILE already exists, not overwriting."
+            ;;
+        esac
+    done
+    whiptail --msgbox "Installation complete! Run 'eww daemon' and open widgets." 10 60
+
+elif [ "$INSTALLER" == "zenity" ]; then
+    zenity --info --text="Press OK to start installation." --width=400 --height=150
+    LOGFILE=$(mktemp)
+    (
+    STEP=0
+    for msg in "${STEPS[@]}"; do
+        progress_zenity "$msg"
+        sleep 0.5
+        case "$msg" in
+            "Cloning repo...")
+                if [ -d "$HOME/eww" ]; then echo "Repo exists, skipping..." >>"$LOGFILE"; cd "$HOME/eww"; else git clone https://github.com/randomboi404/eww --depth 1 "$HOME/eww" &>>"$LOGFILE"; cd "$HOME/eww"; fi
+            ;;
+            "Installing dependencies...") [ -f dependencies.lst ] && paru -Syu --needed --noconfirm $(cat dependencies.lst) &>>"$LOGFILE" || echo "dependencies.lst missing" >>"$LOGFILE";;
+            "Copying configs...")
+                mkdir -p "$HOME/.config"
+                for dir in eww hypr; do
+                    [ -d "$HOME/.config/$dir" ] && echo "$dir exists, skipping..." >>"$LOGFILE" || cp -r "$dir" "$HOME/.config/" &>>"$LOGFILE"
+                done
+            ;;
+            "Creating env.json...")
+                mkdir -p "$HOME/.env"
+                [ -f "$HOME/.env/env.json" ] && echo "env.json exists, skipping..." >>"$LOGFILE" || cat > "$HOME/.env/env.json" <<EOF
+{
+  "WEATHER_API_KEY": "Your weather api key",
+  "LOCATION": "Your city name"
+}
+EOF
+            ;;
+        esac
+    done
+    ) | zenity --progress --title="EWW Rice Installer" --text="Starting..." --percentage=0 --auto-close --pulsate --no-cancel
+
+    zenity --text-info --title="Installer Log" --filename="$LOGFILE" --width=800 --height=500
+    zenity --info --text="Installation complete! Run 'eww daemon' and open widgets."
+    rm -f "$LOGFILE"
 fi
 
-# === Install end-rs notification daemon ===
-echo "🔔 Installing end-rs notification daemon..."
-rm -rf "$ENDRS_DIR"
-git clone --depth 1 "$ENDRS_REPO" "$ENDRS_DIR"
-
-(cd "$ENDRS_DIR" && cargo build --release)
-
-mkdir -p "$BIN_DIR"
-cp "$ENDRS_DIR/target/release/end-rs" "$BIN_DIR/"
-echo "✅ Installed end-rs → $BIN_DIR/end-rs"
-
-# === Add to hyprland.conf ===
-if [ -f "$HYPR_CONF" ]; then
-  backup_if_exists "$HYPR_CONF"
-
-  cp "$HYPR_CONF.bak."* "$HYPR_CONF" # start from backup copy
-
-  if ! grep -q "eww daemon" "$HYPR_CONF"; then
-    echo "exec-once = eww daemon &" >> "$HYPR_CONF"
-    echo "✅ Added 'eww daemon' to hyprland.conf"
-  fi
-  if ! grep -q "end-rs" "$HYPR_CONF"; then
-    echo "exec-once = $BIN_DIR/end-rs &" >> "$HYPR_CONF"
-    echo "✅ Added 'end-rs' autostart to hyprland.conf"
-  fi
-else
-  echo "⚠️ No $HYPR_CONF found. Skipping autostart injection."
-fi
-
-# === Done ===
+# ────────────── Final Instructions ──────────────
 echo
-echo "🎨 Generate colors based on wallpaper with:"
-echo "   wal -i /path/to/wallpaper"
-echo "   matugen image /path/to/wallpaper"
+echo "Next steps:"
+echo "  1. Generate colors: wal -i /path/to/wallpaper && matugen image /path/to/wallpaper"
+echo "  2. Start eww daemon: eww daemon"
+echo "  3. Open widgets:"
+echo "       eww open eww-bar"
+echo "       eww open bg-panel"
+echo "       eww open activate-linux"
 echo
-echo "▶️ To test manually (without restart):"
-echo "   eww daemon &"
-echo "   eww open eww-bar"
-echo "   eww open bg-panel"
-echo "   eww open activate-linux"
-echo "   $BIN_DIR/end-rs &"
-echo
-echo "✅ Install finished! Restart Hyprland to see everything in action."
+echo "⚠️  Don’t forget to check Hyprland keybinds and dock.sh setup."
